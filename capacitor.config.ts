@@ -1,8 +1,9 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.melaku.yenebirr',
-  appName: 'Yene Birr',
+  // NEW id → separate app (old com.melaku.yenebirr stays installed)
+  appId: 'com.melaku.yenebirr.v4',
+  appName: 'Yene Birr 4',
   webDir: 'dist',
   bundledWebRuntime: false,
   server: {
