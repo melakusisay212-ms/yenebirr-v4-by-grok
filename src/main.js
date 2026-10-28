@@ -119,9 +119,9 @@ const DEFAULT_CATS = [
   {id:'c16',type:'income',name:'Other',icon:'coin',color:'#E0B93D'},
 ];
 const DEFAULT_ACCOUNTS = [
-  {id:'a1',name:'Cash',icon:'cash',color:'#1F6E43',start:2500,type:'regular'},
-  {id:'a2',name:'CBE Bank',icon:'bank',color:'#4C7CE0',start:18400,type:'regular'},
-  {id:'a3',name:'Telebirr',icon:'mobile',color:'#C9971A',start:1200,type:'regular'},
+  {id:'a1',name:'Cash',icon:'cash',color:'#1F6E43',start:2500},
+  {id:'a2',name:'CBE Bank',icon:'bank',color:'#4C7CE0',start:18400},
+  {id:'a3',name:'Telebirr',icon:'mobile',color:'#C9971A',start:1200},
 ];
 function seedTx(){
   const t = todayEth();
@@ -144,23 +144,10 @@ function seedTx(){
   ];
 }
 let state = loadState();
+state.loans = Array.isArray(state.loans) ? state.loans : [];
 function loadState(){
-  let s;
-  try{ const raw = localStorage.getItem('yenebirr_state_v2'); if(raw) s = JSON.parse(raw); }catch(e){}
-  if(!s) s = { theme:'green', showGregorian:false, accounts:DEFAULT_ACCOUNTS, categories:DEFAULT_CATS, transactions:seedTx(), budgets:[], debts:{lent:[], borrowed:[]} };
-  // Safe migration for 3.1 features
-  if(!s.debts) s.debts = {lent:[], borrowed:[]};
-  if(!Array.isArray(s.debts.lent)) s.debts.lent = [];
-  if(!Array.isArray(s.debts.borrowed)) s.debts.borrowed = [];
-  (s.accounts||[]).forEach(a=>{
-    if(!a.type) a.type = 'regular';
-    if(a.monthlyGoal == null) a.monthlyGoal = 0;
-    if(a.yearlyGoal == null) a.yearlyGoal = 0;
-  });
-  (s.transactions||[]).forEach(t=>{
-    if(t.type === 'transfer' && !t.toAccountId) t.toAccountId = null;
-  });
-  return s;
+  try{ const raw = localStorage.getItem('yenebirr_state_v2'); if(raw) return JSON.parse(raw); }catch(e){}
+  return { theme:'green', showGregorian:false, accounts:DEFAULT_ACCOUNTS, categories:DEFAULT_CATS, transactions:seedTx(), budgets:[], loans:[] };
 }
 function saveState(){ try{ localStorage.setItem('yenebirr_state_v2', JSON.stringify(state)); }catch(e){} }
 
@@ -170,29 +157,17 @@ function catById(id){ return state.categories.find(c=>c.id===id) || {icon:'other
 function accById(id){ return state.accounts.find(a=>a.id===id) || {name:'—',icon:'wallet',color:'#6E637A'}; }
 function accBalance(id){
   const acc = accById(id); let bal = acc.start||0;
-  state.transactions.forEach(t=>{
-    if(t.type === 'transfer'){
-      if(t.accountId === id) bal -= t.amount;       // from
-      if(t.toAccountId === id) bal += t.amount;     // to
-    } else if(t.accountId === id){
-      bal += (t.type === 'income' ? t.amount : -t.amount);
-    }
-  });
+  state.transactions.forEach(t=>{ if(t.accountId===id) bal += (t.type==='income'?t.amount:-t.amount); });
   return bal;
 }
-function totalBalance(){ return state.accounts.reduce((s,a)=>s+accBalance(a.id),0); }
+function totalBalance(dashboardOnly=false){ return state.accounts.reduce((s,a)=>s+((!dashboardOnly || a.dashboard!==false)?accBalance(a.id):0),0); }
 function sameMonth(t,y,m){ return t.date.y===y && t.date.m===m; }
+function isReportableTransaction(t){ return !t.kind; }
 function monthTotals(y,m){
   let inc=0, exp=0;
-  state.transactions.forEach(t=>{
-    if(!sameMonth(t,y,m)) return;
-    if(t.type==='income') inc+=t.amount;
-    else if(t.type==='expense') exp+=t.amount;
-    // transfers ignored for income/expense
-  });
+  state.transactions.forEach(t=>{ if(isReportableTransaction(t)&&sameMonth(t,y,m)){ if(t.type==='income') inc+=t.amount; else exp+=t.amount; } });
   return {inc,exp};
 }
-function prevEthMonth(y,m){ m--; if(m<1){m=13;y--;} return {y,m}; }
 function toast(msg){ const el=document.getElementById('toast'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1600); }
 
 /* ===================== NAV ===================== */
@@ -218,20 +193,24 @@ function fillStaticIcons(){
   fillIconBtn('catAddBtn','plus');
   fillIconBtn('addCloseBtn','close',15);
   fillIconBtn('accCloseBtn','close',15);
-  fillIconBtn('debtCloseBtn','close',15);
   fillIconBtn('catCloseBtn','close',15);
   fillIconBtn('exportBtn2','download',15);
   fillIconBtn('clearBtn2','refresh',15);
   fillIconBtn('resetBtn2','refresh',15);
   fillIconBtn('analysisPrev','chevL',18);
   fillIconBtn('analysisNext','chevR',18);
+  fillIconBtn('lendBorrowBackBtn','chevL');
+  fillIconBtn('lendBorrowAddBtn','plus');
+  fillIconBtn('loanCloseBtn','close',15);
   document.getElementById('navHome').insertAdjacentHTML('afterbegin', icon('home',20));
   document.getElementById('navCalendar').insertAdjacentHTML('afterbegin', icon('calendar',20));
   document.getElementById('navLedger').insertAdjacentHTML('afterbegin', icon('ledger',20));
   document.getElementById('navAnalysis').insertAdjacentHTML('afterbegin', icon('chart',20));
+  document.getElementById('navSettings').insertAdjacentHTML('afterbegin', icon('settings',20));
   document.getElementById('navFab').innerHTML = icon('plus',24);
   document.getElementById('arrAnalysis').innerHTML = icon('chevR',13);
   document.getElementById('arrLedger').innerHTML = icon('chevR',13);
+  document.getElementById('arrPerspective').innerHTML = icon('chevR',13);
   document.getElementById('hpIncome').innerHTML = icon('arrowDown',15);
   document.getElementById('hpExpense').innerHTML = icon('arrowUp',15);
   document.getElementById('moreBudgetIc').style.background = hexA('#C9971A',0.16);
@@ -240,8 +219,12 @@ function fillStaticIcons(){
   document.getElementById('moreCatIc').style.background = hexA('#4C7CE0',0.16);
   document.getElementById('moreCatIc').style.color = '#4C7CE0';
   document.getElementById('moreCatIc').innerHTML = icon('other',18);
+  document.getElementById('moreLendBorrowIc').style.background = hexA('#8B5E34',0.16);
+  document.getElementById('moreLendBorrowIc').style.color = '#8B5E34';
+  document.getElementById('moreLendBorrowIc').innerHTML = icon('wallet',18);
   setIconCircle('setGregIc','calendar','#4C7CE0');
   setIconCircle('setExportIc','download','#1F6E43');
+  setIconCircle('setImportIc','refresh','#4C7CE0');
   setIconCircle('setClearIc','refresh','#C9971A');
   setIconCircle('setResetIc','refresh','#B0432F');
 }
@@ -256,7 +239,7 @@ function renderHome(){
   const t = todayEth(); const g = new Date();
   document.getElementById('homeGreeting').innerHTML =
     '<span class="amh">'+greetingAm()+'</span> · '+fmtEthDate(t)+(state.showGregorian? ' <span style="opacity:.7">('+g.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+')</span>':'');
-  document.getElementById('heroBalance').textContent = fmt(totalBalance());
+  document.getElementById('heroBalance').textContent = fmt(totalBalance(true));
   const mt = monthTotals(t.y,t.m);
   document.getElementById('heroIncome').textContent = fmt(mt.inc);
   document.getElementById('heroExpense').textContent = fmt(mt.exp);
@@ -264,9 +247,11 @@ function renderHome(){
   document.getElementById('homeQuick').innerHTML = [
     {ic:'arrowDown',c:'#1F6E43',t:'Add Income',fn:"openAdd('income')"},
     {ic:'arrowUp',c:'#B0432F',t:'Add Expense',fn:"openAdd('expense')"},
-    {ic:'refresh',c:'#4C7CE0',t:'Transfer',fn:"openAdd('transfer')"},
     {ic:'calendar',c:'#C9971A',t:'Calendar',fn:"go('calendar')"},
+    {ic:'download',c:'#4C7CE0',t:'Export',fn:"exportCSV()"},
   ].map(q=>'<div class="qbtn" onclick="'+q.fn+'"><div class="ic-circle" style="background:'+hexA(q.c,0.15)+';color:'+q.c+'">'+icon(q.ic,17)+'</div><div class="t">'+q.t+'</div></div>').join('');
+
+  document.getElementById('homePerspective').innerHTML = perspectiveHTML();
 
   document.getElementById('homeDonutCard').innerHTML = donutBlock(t.y,t.m);
 
@@ -277,16 +262,7 @@ function greetingAm(){ const h=new Date().getHours(); if(h<12) return 'እንደ
 function txListHTML(list, showAccount){
   if(!list.length) return '<div class="empty"><div class="ic-circle">'+icon('ledger',22)+'</div>No transactions yet.<br>Tap the + button to add one.</div>';
   return list.map(t=>{
-    if(t.type === 'transfer'){
-      const from = accById(t.accountId); const to = accById(t.toAccountId);
-      return '<div class="tx-row" onclick="openEditTx(\''+t.id+'\')" style="cursor:pointer;">'+
-        '<div class="cat-tile" style="width:42px;height:42px;background:rgba(76,124,224,.15);color:#4C7CE0;">'+icon('refresh',20)+'</div>'+
-        '<div class="tx-mid"><div class="tx-name">'+(t.note||'Transfer')+'</div>'+
-        '<div class="tx-sub">'+from.name+' → '+to.name+' · '+fmtEthShort(t.date)+'</div></div>'+
-        '<div class="tx-amt transfer">'+fmt(t.amount)+'</div>'+
-      '</div>';
-    }
-    const c = catById(t.categoryId); const a = accById(t.accountId);
+    const c = t.kind ? {icon:'wallet',name:t.kind==='loan'?'Lend & Borrow':'Loan settlement',color:'#8B5E34'} : catById(t.categoryId); const a = accById(t.accountId);
     return '<div class="tx-row" onclick="openEditTx(\''+t.id+'\')" style="cursor:pointer;">'+catTile(c,42)+
       '<div class="tx-mid"><div class="tx-name">'+(t.note||c.name)+'</div>'+
       '<div class="tx-sub">'+c.name+(showAccount?' · '+a.name:'')+' · '+fmtEthShort(t.date)+'</div></div>'+
@@ -297,7 +273,7 @@ function txListHTML(list, showAccount){
 const CHART_COLORS = ['#C9971A','#8B2E3C','#1F6E43','#4C7CE0','#C15FC1','#5CB3B3','#E2703A','#8A6BD1'];
 function donutBlock(y,m){
   const cats={}; let total=0;
-  state.transactions.forEach(t=>{ if(t.type!=='expense') return; if(!sameMonth(t,y,m)) return; cats[t.categoryId]=(cats[t.categoryId]||0)+t.amount; total+=t.amount; });
+  state.transactions.forEach(t=>{ if(!isReportableTransaction(t)||t.type!=='expense') return; if(!sameMonth(t,y,m)) return; cats[t.categoryId]=(cats[t.categoryId]||0)+t.amount; total+=t.amount; });
   return donutBlockFromCats(cats,total);
 }
 function donutBlockFromCats(cats,total){
@@ -362,25 +338,9 @@ function calPick(d){ calSelected={y:calView.y,m:calView.m,d}; renderCalendar(); 
 /* ===================== RENDER: LEDGER ===================== */
 let ledgerFilter='all';
 function renderLedger(){
-  document.getElementById('accScroll').innerHTML = state.accounts.map(a=>{
-    const bal = accBalance(a.id);
-    const isSav = a.type === 'saving';
-    let progress = '';
-    if(isSav && ((a.monthlyGoal||0) > 0 || (a.yearlyGoal||0) > 0)){
-      const mg = a.monthlyGoal || 0, yg = a.yearlyGoal || 0;
-      const mp = mg ? Math.min(100, Math.round(bal/mg*100)) : 0;
-      const yp = yg ? Math.min(100, Math.round(bal/yg*100)) : 0;
-      progress = '<div class="sav-progress">';
-      if(mg) progress += '<div class="sav-bar"><div class="sav-fill" style="width:'+mp+'%"></div></div><div class="sav-lbl">Month '+mp+'% · '+fmt(mg)+'</div>';
-      if(yg) progress += '<div class="sav-bar yr"><div class="sav-fill" style="width:'+yp+'%"></div></div><div class="sav-lbl">Year '+yp+'% · '+fmt(yg)+'</div>';
-      progress += '</div>';
-    }
-    return '<div class="acc-card'+(isSav?' saving':'')+'" onclick="openEditAccount(\''+a.id+'\')" style="cursor:pointer;">'+
-      catTile({icon:a.icon,color:a.color},36)+
-      '<div class="n">'+(isSav?'🎯 ':'')+a.name+'</div>'+
-      '<div class="b">'+fmt(bal)+'</div>'+progress+
-    '</div>';
-  }).join('') + '<div class="acc-card add" onclick="openAddAccount()">'+icon('plus',22)+'<div class="n">Add account</div></div>';
+  document.getElementById('accScroll').innerHTML = state.accounts.map(a=>
+    '<div class="acc-card '+(a.dashboard!==false?'dashboard-selected':'')+'" onclick="openEditAccount(\''+a.id+'\')" style="cursor:pointer;">'+catTile({icon:a.icon,color:a.color},36)+'<div class="n">'+a.name+'</div><div class="b">'+fmt(accBalance(a.id))+'</div><div class="acc-dashboard-toggle" onclick="event.stopPropagation();toggleDashboardAccount(\''+a.id+'\')">'+(a.dashboard!==false?'Shown on Home':'Hidden from Home')+'</div></div>'
+  ).join('') + '<div class="acc-card add" onclick="openAddAccount()">'+icon('plus',22)+'<div class="n">Add account</div></div>';
 
   document.getElementById('ledgerChips').innerHTML = '<div class="chip '+(ledgerFilter==='all'?'active':'')+'" onclick="setLedgerFilter(\'all\')">All</div>' +
     state.accounts.map(a=>'<div class="chip '+(ledgerFilter===a.id?'active':'')+'" onclick="setLedgerFilter(\''+a.id+'\')">'+icon(a.icon,14)+a.name+'</div>').join('');
@@ -396,8 +356,7 @@ function renderLedger(){
     const key = t.date.y+'-'+t.date.m+'-'+t.date.d;
     if(!map[key]){ map[key] = {date:t.date, items:[], inc:0, exp:0}; groups.push(map[key]); }
     map[key].items.push(t);
-    if(t.type==='income') map[key].inc += t.amount;
-    else if(t.type==='expense') map[key].exp += t.amount;
+    if(t.type==='income') map[key].inc += t.amount; else map[key].exp += t.amount;
   });
 
   if(!groups.length){
@@ -425,6 +384,7 @@ function setLedgerFilter(id){ ledgerFilter=id; renderLedger(); }
 
 /* ===================== RENDER: ANALYSIS ===================== */
 let analysisView = null; // {y,m} current month for ranking
+let expandedCategoryId = null;
 
 function analysisShift(dir){
   if(!analysisView) analysisView = todayEth();
@@ -440,74 +400,111 @@ function renderAnalysis(){
   const y = analysisView.y, m = analysisView.m;
   const mo = ETH_MONTHS[m-1];
   document.getElementById('analysisMonthTitle').innerHTML = '<span class="amh">'+mo.am+'</span> '+y;
-
-  const mt = monthTotals(y, m);
-  const prev = prevEthMonth(y, m);
-  const pt = monthTotals(prev.y, prev.m);
-  const net = mt.inc - mt.exp;
-  const prevNet = pt.inc - pt.exp;
-  function pctChange(cur, prevV){
-    if(!prevV && !cur) return {txt:'—', cls:''};
-    if(!prevV) return {txt:'new', cls:'in'};
-    const p = Math.round((cur - prevV) / Math.abs(prevV) * 100);
-    const sign = p > 0 ? '+' : '';
-    return {txt: sign + p + '%', cls: p > 0 ? 'in' : (p < 0 ? 'out' : '')};
-  }
-  const incCh = pctChange(mt.inc, pt.inc);
-  const expCh = pctChange(mt.exp, pt.exp);
-  const netCh = pctChange(net, prevNet);
-  const prevMo = ETH_MONTHS[prev.m-1];
-
-  const insightEl = document.getElementById('analysisInsights');
-  if(insightEl){
-    insightEl.innerHTML =
-      '<div class="insight-grid">'+
-        '<div class="insight-card"><div class="il">Income</div><div class="iv in">'+fmt(mt.inc)+'</div><div class="ich '+incCh.cls+'">'+incCh.txt+' vs '+prevMo.am+'</div></div>'+
-        '<div class="insight-card"><div class="il">Expense</div><div class="iv out">'+fmt(mt.exp)+'</div><div class="ich '+expCh.cls+'">'+expCh.txt+' vs '+prevMo.am+'</div></div>'+
-        '<div class="insight-card"><div class="il">Net</div><div class="iv '+(net>=0?'in':'out')+'">'+(net>=0?'+':'−')+fmt(Math.abs(net))+'</div><div class="ich '+netCh.cls+'">'+netCh.txt+' vs prev</div></div>'+
-      '</div>'+
-      '<div class="mom-bar">'+
-        '<div class="mom-row"><span>Income</span><div class="mom-track"><div class="mom-fill in" style="width:'+(Math.max(mt.inc,pt.inc)?Math.round(mt.inc/Math.max(mt.inc,pt.inc,1)*100):0)+'%"></div></div><span class="mom-prev">prev '+fmt(pt.inc)+'</span></div>'+
-        '<div class="mom-row"><span>Expense</span><div class="mom-track"><div class="mom-fill out" style="width:'+(Math.max(mt.exp,pt.exp)?Math.round(mt.exp/Math.max(mt.exp,pt.exp,1)*100):0)+'%"></div></div><span class="mom-prev">prev '+fmt(pt.exp)+'</span></div>'+
-      '</div>';
-  }
+  document.getElementById('analysisComparison').innerHTML = comparisonHTML(y,m);
+  document.getElementById('analysisWeekly').innerHTML = weeklySpendingHTML();
 
   // Aggregate expenses for this month
   const cats = {}; let total = 0; const counts = {};
-  let txCount = 0, daysWithExp = new Set();
   state.transactions.forEach(tr=>{
+    if(!isReportableTransaction(tr)||tr.type !== 'expense') return;
     if(!sameMonth(tr, y, m)) return;
-    if(tr.type === 'expense'){
-      cats[tr.categoryId] = (cats[tr.categoryId]||0) + tr.amount;
-      counts[tr.categoryId] = (counts[tr.categoryId]||0) + 1;
-      total += tr.amount;
-      daysWithExp.add(tr.date.d);
-      txCount++;
-    } else if(tr.type === 'income') txCount++;
+    cats[tr.categoryId] = (cats[tr.categoryId]||0) + tr.amount;
+    counts[tr.categoryId] = (counts[tr.categoryId]||0) + 1;
+    total += tr.amount;
   });
 
   const entries = Object.entries(cats).sort((a,b)=>b[1]-a[1]);
   document.getElementById('analysisDonut').innerHTML = rankingDonut(entries, total);
-  document.getElementById('analysisRanking').innerHTML = rankingList(entries, total, counts);
+  document.getElementById('analysisRanking').innerHTML = rankingList(entries, total, counts, y, m);
+}
 
-  // Extra insights
-  const extra = document.getElementById('analysisExtra');
-  if(extra){
-    const daysInMonth = ethMonthLen(y, m);
-    const avgDaily = total && daysWithExp.size ? total / daysWithExp.size : 0;
-    const topCat = entries[0] ? catById(entries[0][0]).name + ' ('+fmt(entries[0][1])+')' : '—';
-    const savAccs = state.accounts.filter(a=>a.type==='saving');
-    let savTotal = savAccs.reduce((s,a)=>s+accBalance(a.id),0);
-    let savRate = mt.inc > 0 ? Math.round((mt.inc - mt.exp) / mt.inc * 100) : 0;
-    extra.innerHTML =
-      '<div class="extra-insights">'+
-        '<div class="ei-row"><span>Avg spend / active day</span><strong>'+fmt(avgDaily)+'</strong></div>'+
-        '<div class="ei-row"><span>Top category</span><strong>'+topCat+'</strong></div>'+
-        '<div class="ei-row"><span>Transactions this month</span><strong>'+txCount+'</strong></div>'+
-        '<div class="ei-row"><span>Savings rate (net/income)</span><strong>'+(mt.inc?savRate+'%':'—')+'</strong></div>'+
-        (savAccs.length ? '<div class="ei-row"><span>In saving goals</span><strong>'+fmt(savTotal)+'</strong></div>' : '')+
-      '</div>';
+function ethDateOffset(e,offset){ return jdnToEthiopian(ethiopianToJDN(e.y,e.m,e.d)+offset); }
+function weekWindow(offsetWeeks=0){
+  const today = todayEth();
+  const weekday = weekdayOfEth(today.y,today.m,today.d);
+  const start = ethDateOffset(today, -weekday + offsetWeeks*7);
+  return {start, end:ethDateOffset(start,6)};
+}
+function weekExpenseData(offsetWeeks=0){
+  const win = weekWindow(offsetWeeks);
+  const values = Array.from({length:7},(_,i)=>{
+    const day = ethDateOffset(win.start,i);
+    const value = state.transactions.filter(t=>isReportableTransaction(t)&&t.type==='expense'&&t.date.y===day.y&&t.date.m===day.m&&t.date.d===day.d).reduce((s,t)=>s+(Number(t.amount)||0),0);
+    return {day,value};
+  });
+  return {win,values,total:values.reduce((s,d)=>s+d.value,0)};
+}
+function weeklySpendingHTML(){
+  const current = weekExpenseData(0), previous = weekExpenseData(-1);
+  const max = Math.max(1,...current.values.map(d=>d.value));
+  const change = comparisonValue(current.total,previous.total);
+  const changeClass = comparisonClass(current.total,previous.total,true);
+  const weekdayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const today = todayEth(), todayIndex = weekdayOfEth(today.y,today.m,today.d);
+  const bars = current.values.map((d,i)=>{
+    const height = Math.max(d.value ? 8 : 2, Math.round((d.value/max)*100));
+    return '<div class="week-bar-col"><div class="week-bar-value">'+(d.value?Math.round(d.value).toLocaleString():'')+'</div><div class="week-bar-track"><div class="week-bar-fill '+(i===todayIndex?'today':'')+'" style="height:'+height+'%"></div></div><div class="week-bar-day">'+weekdayNames[i]+'</div></div>';
+  }).join('');
+  return '<div class="weekly-box"><div class="weekly-head"><div><div class="weekly-title">Weekly spending</div><div class="weekly-sub"><span class="amh">'+fmtEthShort(current.win.start)+'</span> – <span class="amh">'+fmtEthShort(current.win.end)+'</span></div></div><div class="weekly-total">'+fmt(current.total)+'<span class="weekly-change '+changeClass+'">'+change+' vs prev week</span></div></div><div class="weekly-bars">'+bars+'</div><div class="weekly-foot">Previous week: '+fmt(previous.total)+'</div></div>';
+}
+function perspectiveHTML(){
+  const current = weekExpenseData(0), previous = weekExpenseData(-1), insights=[];
+  if(current.total || previous.total){
+    const change = comparisonValue(current.total,previous.total);
+    insights.push({tone:comparisonClass(current.total,previous.total,true),text:current.total>previous.total?'Spending is up '+change+' versus the same days last week.':'Spending is down '+(change==='0%'?'0%':change.replace('-',''))+' versus the same days last week.'});
   }
+  const cats={}, prevCats={};
+  [current,previous].forEach((week,index)=>week.values.forEach(d=>state.transactions.forEach(t=>{if(isReportableTransaction(t)&&t.type==='expense'&&t.date.y===d.day.y&&t.date.m===d.day.m&&t.date.d===d.day.d){const target=index?prevCats:cats;target[t.categoryId]=(target[t.categoryId]||0)+Number(t.amount||0);}})));
+  const top=Object.entries(cats).sort((a,b)=>b[1]-a[1])[0];
+  if(top) insights.push({tone:'neutral',text:catById(top[0]).name+' is your largest category this week at '+fmt(top[1])+'.'});
+  const rising=Object.keys(cats).map(id=>({id,delta:(cats[id]||0)-(prevCats[id]||0)})).filter(x=>x.delta>0).sort((a,b)=>b.delta-a.delta)[0];
+  if(rising) insights.push({tone:'warning',text:catById(rising.id).name+' increased by '+fmt(rising.delta)+' compared with last week.'});
+  if(!insights.length) return '<div class="perspective-empty">Add a few expenses and Yene Birr will explain what is changing in your spending.</div>';
+  return insights.slice(0,3).map(i=>'<div class="perspective-insight '+i.tone+'"><div class="perspective-dot"></div><div>'+i.text+'</div></div>').join('');
+}
+
+function previousEthMonth(y,m){ return m===1 ? {y:y-1,m:13} : {y,m:m-1}; }
+function analysisCutoffDay(y,m){
+  const t = todayEth();
+  return (t.y===y && t.m===m) ? t.d : ethMonthLen(y,m);
+}
+function periodTotals(y,m,throughDay){
+  let inc=0, exp=0;
+  state.transactions.forEach(t=>{
+    if(!isReportableTransaction(t)||t.date.y!==y || t.date.m!==m || t.date.d>throughDay) return;
+    if(t.type==='income') inc += Number(t.amount)||0;
+    else if(t.type==='expense') exp += Number(t.amount)||0;
+  });
+  return {inc,exp};
+}
+function comparisonValue(current, previous){
+  if(previous===0) return current===0 ? '0%' : 'New';
+  const pct = Math.round(((current-previous)/previous)*100);
+  return (pct>0?'+':'')+pct+'%';
+}
+function comparisonClass(current, previous, invert){
+  if(current===previous) return 'flat';
+  const improved = invert ? current<previous : current>previous;
+  return improved ? 'better' : 'worse';
+}
+function comparisonHTML(y,m){
+  const prev = previousEthMonth(y,m);
+  const currentDays = analysisCutoffDay(y,m);
+  const previousDays = Math.min(currentDays, ethMonthLen(prev.y,prev.m));
+  const current = periodTotals(y,m,currentDays);
+  const prior = periodTotals(prev.y,prev.m,previousDays);
+  const currentNet = current.inc-current.exp;
+  const priorNet = prior.inc-prior.exp;
+  const label = currentDays===ethMonthLen(y,m) ? 'Full month' : 'Days 1–'+currentDays;
+  function card(labelText, value, oldValue, invert){
+    return '<div class="comparison-stat"><div class="comparison-stat-label">'+labelText+'</div>'+
+      '<div class="comparison-stat-value">'+fmt(value)+'</div>'+
+      '<div class="comparison-stat-change '+comparisonClass(value,oldValue,invert)+'">'+comparisonValue(value,oldValue)+' vs prev '+fmt(oldValue)+'</div></div>';
+  }
+  return '<div class="comparison-box">'+
+    '<div class="comparison-head"><div><div class="comparison-title">Same-period comparison</div><div class="comparison-sub">'+label+' compared with days 1–'+previousDays+' of '+ETH_MONTHS[prev.m-1].am+' '+prev.y+'</div></div><div class="comparison-days">'+currentDays+'d</div></div>'+
+    '<div class="comparison-grid">'+card('Income',current.inc,prior.inc,false)+card('Expense',current.exp,prior.exp,true)+card('Net',currentNet,priorNet,false)+'</div>'+
+  '</div>';
 }
 
 function rankingDonut(entries, total){
@@ -541,7 +538,7 @@ function rankingDonut(entries, total){
   '</div>';
 }
 
-function rankingList(entries, total, counts){
+function rankingList(entries, total, counts, y, m){
   if(!entries.length) return '';
   return entries.map((e,i)=>{
     const c = catById(e[0]);
@@ -549,7 +546,8 @@ function rankingList(entries, total, counts){
     const pctStr = (Math.round(pct*10)/10)+'%';
     const bills = counts[e[0]]||0;
     const barW = Math.max(2, Math.round(pct));
-    return '<div class="rank-row">'+
+    const isExpanded = expandedCategoryId===e[0];
+    return '<div class="rank-row '+(isExpanded?'expanded':'')+'" onclick="toggleCategoryDetails(\''+e[0]+'\')">'+
       '<div class="rank-left">'+
         '<div class="rank-icon" style="background:'+hexA(c.color,0.15)+';color:'+c.color+'">'+icon(c.icon,20)+'</div>'+
         '<div class="rank-meta">'+
@@ -559,8 +557,25 @@ function rankingList(entries, total, counts){
         '</div>'+
       '</div>'+
       '<div class="rank-amt out">−'+fmt(e[1])+'</div>'+
-    '</div>';
+    '</div>'+(isExpanded ? categoryDetailsHTML(e[0],y,m) : '');
   }).join('');
+}
+
+function toggleCategoryDetails(categoryId){
+  expandedCategoryId = expandedCategoryId===categoryId ? null : categoryId;
+  renderAnalysis();
+}
+function categoryDetailsHTML(categoryId,y,m){
+  const entries = state.transactions
+    .filter(t=>isReportableTransaction(t) && t.type==='expense' && t.categoryId===categoryId && sameMonth(t,y,m))
+    .sort((a,b)=>a.date.d-b.date.d || String(a.id).localeCompare(String(b.id)));
+  if(!entries.length) return '';
+  return '<div class="category-details">'+entries.map(t=>{
+    const account = accById(t.accountId);
+    return '<div class="category-detail-row" onclick="event.stopPropagation();openEditTx(\''+t.id+'\')">'+
+      '<div><div class="category-detail-note">'+(t.note||'No note')+'</div><div class="category-detail-meta"><span class="amh">'+ETH_MONTHS[t.date.m-1].am+'</span> '+t.date.d+' · '+account.name+'</div></div>'+
+      '<div class="category-detail-amount">−'+fmt(t.amount)+'</div></div>';
+  }).join('')+'</div>';
 }
 
 /* ===================== RENDER: BUDGET ===================== */
@@ -568,7 +583,7 @@ function renderBudget(){
   const t = todayEth();
   document.getElementById('budgetMonth').innerHTML = '<span class="amh">'+ETH_MONTHS[t.m-1].am+'</span> '+t.y;
   const mt = {};
-  state.transactions.forEach(tr=>{ if(tr.type==='expense'&&sameMonth(tr,t.y,t.m)) mt[tr.categoryId]=(mt[tr.categoryId]||0)+tr.amount; });
+  state.transactions.forEach(tr=>{ if(isReportableTransaction(tr)&&tr.type==='expense'&&sameMonth(tr,t.y,t.m)) mt[tr.categoryId]=(mt[tr.categoryId]||0)+tr.amount; });
   const expCats = state.categories.filter(c=>c.type==='expense');
   document.getElementById('budgetList').innerHTML = expCats.map(c=>{
     const b = state.budgets.find(x=>x.categoryId===c.id && x.y===t.y && x.m===t.m);
@@ -628,21 +643,19 @@ function saveCategory(){
 /* ===================== ADD / EDIT ACCOUNT ===================== */
 let selectedAccIcon='bank';
 let editingAccId = null;
+let editingAccDashboard = true;
 
 function openAddAccount(){
   editingAccId = null;
+  editingAccDashboard = true;
   document.getElementById('accSheetTitle').textContent = 'New account';
   document.getElementById('accSaveBtn').textContent = 'Add account';
   document.getElementById('accDeleteBtn').style.display = 'none';
   document.getElementById('accName').value='';
   document.getElementById('accStart').value='';
   selectedAccIcon = ACCOUNT_ICON_KEYS[0];
+  setAccountDashboardSwitch();
   document.getElementById('accIconGrid').innerHTML = ACCOUNT_ICON_KEYS.map((k,i)=>'<div class="iconcell '+(i===0?'sel':'')+'" onclick="pickAccIcon(this,\''+k+'\')" style="color:var(--ink);">'+icon(k,19)+'</div>').join('');
-  const savToggle = document.getElementById('accSavingToggle');
-  if(savToggle){ savToggle.classList.remove('on'); savToggle.dataset.on='0'; }
-  const mg = document.getElementById('accMonthlyGoal'); if(mg) mg.value='';
-  const yg = document.getElementById('accYearlyGoal'); if(yg) yg.value='';
-  const goals = document.getElementById('accGoalsFields'); if(goals) goals.style.display='none';
   document.getElementById('accOverlay').classList.add('show');
 }
 
@@ -650,55 +663,44 @@ function openEditAccount(id){
   const a = state.accounts.find(x=>x.id===id);
   if(!a) return;
   editingAccId = id;
+  editingAccDashboard = a.dashboard!==false;
   document.getElementById('accSheetTitle').textContent = 'Edit account';
   document.getElementById('accSaveBtn').textContent = 'Save changes';
   document.getElementById('accDeleteBtn').style.display = 'block';
   document.getElementById('accName').value = a.name;
   document.getElementById('accStart').value = a.start||0;
   selectedAccIcon = a.icon || ACCOUNT_ICON_KEYS[0];
+  setAccountDashboardSwitch();
   document.getElementById('accIconGrid').innerHTML = ACCOUNT_ICON_KEYS.map(k=>'<div class="iconcell '+(k===selectedAccIcon?'sel':'')+'" onclick="pickAccIcon(this,\''+k+'\')" style="color:var(--ink);">'+icon(k,19)+'</div>').join('');
-  const isSav = a.type === 'saving';
-  const savToggle = document.getElementById('accSavingToggle');
-  if(savToggle){ savToggle.classList.toggle('on', isSav); savToggle.dataset.on = isSav ? '1' : '0'; }
-  const goals = document.getElementById('accGoalsFields'); if(goals) goals.style.display = isSav ? '' : 'none';
-  const mg = document.getElementById('accMonthlyGoal'); if(mg) mg.value = a.monthlyGoal || '';
-  const yg = document.getElementById('accYearlyGoal'); if(yg) yg.value = a.yearlyGoal || '';
   document.getElementById('accOverlay').classList.add('show');
 }
 
 function pickAccIcon(el,k){ selectedAccIcon=k; document.querySelectorAll('#accIconGrid .iconcell').forEach(c=>c.classList.remove('sel')); el.classList.add('sel'); }
-function toggleAccSaving(){
-  const el = document.getElementById('accSavingToggle');
-  const on = el.dataset.on !== '1';
-  el.dataset.on = on ? '1' : '0';
-  el.classList.toggle('on', on);
-  const goals = document.getElementById('accGoalsFields');
-  if(goals) goals.style.display = on ? '' : 'none';
+function setAccountDashboardSwitch(){
+  const el=document.getElementById('accDashboardSwitch');
+  if(el) el.classList.toggle('on',editingAccDashboard);
+}
+function toggleAccountDashboard(){ editingAccDashboard=!editingAccDashboard; setAccountDashboardSwitch(); }
+function toggleDashboardAccount(id){
+  const a=state.accounts.find(x=>x.id===id);
+  if(!a) return;
+  a.dashboard=a.dashboard===false;
+  saveState();
+  renderLedger();
+  if(currentScreen==='home') renderHome();
+  toast(a.dashboard?'Account shown on Home':'Account hidden from Home');
 }
 
 function saveAccount(){
   const name = document.getElementById('accName').value.trim();
   if(!name){ toast('Enter an account name'); return; }
-  const startBal = parseFloat(document.getElementById('accStart').value)||0;
-  const savToggle = document.getElementById('accSavingToggle');
-  const isSav = savToggle && savToggle.dataset.on === '1';
-  const monthlyGoal = isSav ? (parseFloat(document.getElementById('accMonthlyGoal')?.value)||0) : 0;
-  const yearlyGoal = isSav ? (parseFloat(document.getElementById('accYearlyGoal')?.value)||0) : 0;
+  const start = parseFloat(document.getElementById('accStart').value)||0;
   if(editingAccId){
     const a = state.accounts.find(x=>x.id===editingAccId);
-    if(a){
-      a.name=name; a.icon=selectedAccIcon; a.start=startBal;
-      a.type = isSav ? 'saving' : 'regular';
-      a.monthlyGoal = monthlyGoal; a.yearlyGoal = yearlyGoal;
-    }
+    if(a){ a.name=name; a.icon=selectedAccIcon; a.start=start; a.dashboard=editingAccDashboard; }
     saveState(); closeSheet('accOverlay'); render(); toast('Account updated');
   } else {
-    state.accounts.push({
-      id:'a'+Date.now(), name, icon:selectedAccIcon,
-      color:COLOR_PALETTE[state.accounts.length%COLOR_PALETTE.length],
-      start: startBal, type: isSav ? 'saving' : 'regular',
-      monthlyGoal, yearlyGoal
-    });
+    state.accounts.push({id:'a'+Date.now(), name, icon:selectedAccIcon, color:COLOR_PALETTE[state.accounts.length%COLOR_PALETTE.length], start, dashboard:editingAccDashboard});
     saveState(); closeSheet('accOverlay'); renderLedger(); toast('Account added');
   }
   editingAccId = null;
@@ -713,15 +715,92 @@ function deleteAccount(){
   saveState(); closeSheet('accOverlay'); editingAccId=null; render(); toast('Account deleted');
 }
 
+/* ===================== LEND & BORROW ===================== */
+let loanFilter='all', loanType='lent', editingLoanId=null, loanAccountId=null;
+function openLendBorrow(){ go('lendborrow'); }
+function loanById(id){ return state.loans.find(x=>x.id===id); }
+function renderLendBorrow(){
+  const openLent=state.loans.filter(x=>x.direction==='lent'&&x.status!=='settled').reduce((s,x)=>s+x.amount,0);
+  const openBorrowed=state.loans.filter(x=>x.direction==='borrowed'&&x.status!=='settled').reduce((s,x)=>s+x.amount,0);
+  document.getElementById('loanSummary').innerHTML='<div class="loan-summary-card lent"><div class="label">You lent</div><div class="amount">'+fmt(openLent)+'</div><div class="sub">Outstanding</div></div><div class="loan-summary-card borrowed"><div class="label">You borrowed</div><div class="amount">'+fmt(openBorrowed)+'</div><div class="sub">Outstanding</div></div>';
+  ['all','lent','borrowed'].forEach(id=>document.getElementById('loanTab'+id.charAt(0).toUpperCase()+id.slice(1)).classList.toggle('active',loanFilter===id));
+  let list=state.loans.filter(x=>loanFilter==='all'||x.direction===loanFilter).sort((a,b)=>ethiopianToJDN(b.date.y,b.date.m,b.date.d)-ethiopianToJDN(a.date.y,a.date.m,a.date.d));
+  if(!list.length){document.getElementById('loanList').innerHTML='<div class="empty"><div class="ic-circle">'+icon('wallet',22)+'</div>No lend or borrow records yet.<br>Tap + to add one.</div>';return;}
+  document.getElementById('loanList').innerHTML=list.map(x=>{
+    const due=x.dueDate?' · Due '+fmtEthShort(x.dueDate):'';
+    const settled=x.status==='settled';
+    return '<div class="loan-row" onclick="openEditLoan(\''+x.id+'\')"><div class="loan-type-icon '+x.direction+'">'+icon(x.direction==='lent'?'arrowUp':'arrowDown',18)+'</div><div class="loan-mid"><div class="loan-person">'+x.person+'</div><div class="loan-meta">'+(x.direction==='lent'?'Lent':'Borrowed')+' · '+fmtEthShort(x.date)+due+'</div><span class="loan-status">'+(settled?'Settled':'Outstanding')+'</span></div><div class="loan-amount '+x.direction+'">'+(x.direction==='lent'?'−':'+')+fmt(x.amount)+'</div></div>';
+  }).join('');
+}
+function setLoanFilter(filter){ loanFilter=filter; renderLendBorrow(); }
+function setLoanType(type){
+  loanType=type;
+  document.getElementById('loanTypeLent').classList.toggle('active',type==='lent');
+  document.getElementById('loanTypeBorrowed').classList.toggle('active',type==='borrowed');
+}
+function fillLoanDate(prefix,e,optional=false){
+  const mo=document.getElementById(prefix+'Month'), day=document.getElementById(prefix+'Day'), year=document.getElementById(prefix+'Year');
+  mo.innerHTML=ETH_MONTHS.map((x,i)=>'<option value="'+(i+1)+'">'+x.am+'</option>').join(''); mo.value=e?e.m:todayEth().m;
+  const y=e?e.y:todayEth().y, len=ethMonthLen(y,Number(mo.value));
+  day.innerHTML=Array.from({length:len},(_,i)=>'<option value="'+(i+1)+'">'+(i+1)+'</option>').join(''); day.value=e?e.d:todayEth().d;
+  year.value=e?e.y:(optional?'':todayEth().y);
+  mo.onchange=()=>{const yy=Number(year.value)||todayEth().y;day.innerHTML=Array.from({length:ethMonthLen(yy,Number(mo.value))},(_,i)=>'<option value="'+(i+1)+'">'+(i+1)+'</option>').join('');};
+}
+function loanAccountChips(){
+  document.getElementById('loanAccountChips').innerHTML=state.accounts.map(a=>'<div class="chip '+(a.id===loanAccountId?'active':'')+'" onclick="pickLoanAccount(\''+a.id+'\')">'+icon(a.icon,14)+a.name+'</div>').join('');
+}
+function pickLoanAccount(id){loanAccountId=id;loanAccountChips();}
+function openAddLoan(){
+  editingLoanId=null;loanType='lent';loanAccountId=state.accounts[0]?state.accounts[0].id:null;
+  document.getElementById('loanSheetTitle').textContent='New record';document.getElementById('loanSaveBtn').textContent='Save record';
+  document.getElementById('loanSettleBtn').style.display='none';document.getElementById('loanDeleteBtn').style.display='none';
+  document.getElementById('loanPerson').value='';document.getElementById('loanAmount').value='';document.getElementById('loanNote').value='';
+  setLoanType('lent');loanAccountChips();fillLoanDate('loanDate',todayEth());fillLoanDate('loanDue',null,true);document.getElementById('loanOverlay').classList.add('show');
+}
+function openEditLoan(id){
+  const loan=loanById(id);if(!loan)return;editingLoanId=id;loanType=loan.direction;loanAccountId=loan.accountId;
+  document.getElementById('loanSheetTitle').textContent='Edit record';document.getElementById('loanSaveBtn').textContent='Save changes';
+  document.getElementById('loanPerson').value=loan.person;document.getElementById('loanAmount').value=loan.amount;document.getElementById('loanNote').value=loan.note||'';
+  setLoanType(loanType);loanAccountChips();fillLoanDate('loanDate',loan.date);fillLoanDate('loanDue',loan.dueDate,true);
+  document.getElementById('loanSettleBtn').style.display=loan.status==='settled'?'none':'block';document.getElementById('loanDeleteBtn').style.display='block';document.getElementById('loanOverlay').classList.add('show');
+}
+function loanFormDate(prefix,optional=false){
+  const y=Number(document.getElementById(prefix+'Year').value),m=Number(document.getElementById(prefix+'Month').value),d=Number(document.getElementById(prefix+'Day').value);
+  if(optional&&!y)return null;if(!y||m<1||m>13||d<1||d>ethMonthLen(y,m))return undefined;return {y,m,d};
+}
+function saveLoan(){
+  const person=document.getElementById('loanPerson').value.trim(),amount=Number(document.getElementById('loanAmount').value),date=loanFormDate('loanDate'),dueDate=loanFormDate('loanDue',true);
+  if(!person){toast('Enter a person or organization');return;}if(!amount||amount<=0){toast('Enter a valid amount');return;}if(!loanAccountId){toast('Choose an account');return;}if(!date||dueDate===undefined){toast('Check the dates');return;}
+  if(editingLoanId){
+    const loan=loanById(editingLoanId);if(!loan)return;loan.direction=loanType;loan.person=person;loan.amount=amount;loan.accountId=loanAccountId;loan.date=date;loan.dueDate=dueDate;loan.note=document.getElementById('loanNote').value.trim();
+    const movement=state.transactions.find(t=>t.loanId===loan.id&&t.kind==='loan');if(movement){movement.type=loanType==='lent'?'expense':'income';movement.amount=amount;movement.accountId=loanAccountId;movement.date=date;movement.note=(loanType==='lent'?'Lent to ':'Borrowed from ')+person+(loan.note?' · '+loan.note:'');}
+    const settlement=state.transactions.find(t=>t.loanId===loan.id&&t.kind==='loan-settlement');if(settlement){settlement.type=loanType==='lent'?'income':'expense';settlement.amount=amount;settlement.accountId=loanAccountId;settlement.note=(loanType==='lent'?'Received from ':'Repaid to ')+person;}
+    saveState();closeSheet('loanOverlay');renderLendBorrow();toast('Record updated');return;
+  }
+  const id='loan'+Date.now();const loan={id,direction:loanType,person,amount,accountId:loanAccountId,date,dueDate,note:document.getElementById('loanNote').value.trim(),status:'open'};
+  state.loans.push(loan);state.transactions.push({id:'lt'+Date.now(),kind:'loan',loanId:id,type:loanType==='lent'?'expense':'income',categoryId:null,accountId:loanAccountId,amount,note:(loanType==='lent'?'Lent to ':'Borrowed from ')+person+(loan.note?' · '+loan.note:''),date});
+  saveState();closeSheet('loanOverlay');renderLendBorrow();toast('Record added');
+}
+function settleLoan(){
+  const loan=loanById(editingLoanId);if(!loan||loan.status==='settled')return;
+  loan.status='settled';loan.settledDate=todayEth();loan.settlementId='ls'+Date.now();
+  state.transactions.push({id:loan.settlementId,kind:'loan-settlement',loanId:loan.id,type:loan.direction==='lent'?'income':'expense',categoryId:null,accountId:loan.accountId,amount:loan.amount,note:(loan.direction==='lent'?'Received from ':'Repaid to ')+loan.person,date:loan.settledDate});
+  saveState();closeSheet('loanOverlay');renderLendBorrow();toast('Marked as settled');
+}
+function deleteLoan(){
+  if(!editingLoanId||!confirm('Delete this lend or borrow record?'))return;
+  state.loans=state.loans.filter(x=>x.id!==editingLoanId);state.transactions=state.transactions.filter(t=>t.loanId!==editingLoanId);
+  saveState();closeSheet('loanOverlay');editingLoanId=null;renderLendBorrow();toast('Record deleted');
+}
+
 /* ===================== ADD / EDIT TRANSACTION ===================== */
-let addType='expense', addCatId=null, addAccId=null, addToAccId=null, addAmountStr='';
+let addType='expense', addCatId=null, addAccId=null, addAmountStr='';
 let editingTxId = null;
 
 function openAdd(type){
   editingTxId = null;
-  const titles = {expense:'New expense', income:'New income', transfer:'Transfer between accounts'};
-  document.getElementById('addSheetTitle').textContent = titles[type] || 'New transaction';
-  document.getElementById('addSaveBtn').textContent = type==='transfer' ? 'Transfer' : 'Save transaction';
+  document.getElementById('addSheetTitle').textContent = 'New transaction';
+  document.getElementById('addSaveBtn').textContent = 'Save transaction';
   document.getElementById('addDeleteBtn').style.display = 'none';
   setAddType(type); addAmountStr=''; renderAmt();
   document.getElementById('addNote').value='';
@@ -742,19 +821,13 @@ function openEditTx(id){
   renderAmt();
   addCatId = tx.categoryId;
   addAccId = tx.accountId;
-  addToAccId = tx.toAccountId || null;
-  if(tx.type !== 'transfer'){
-    const cats = state.categories.filter(c=>c.type===tx.type);
-    document.getElementById('addCatGrid').innerHTML = cats.map(c=>
-      '<div class="catcell '+(c.id===addCatId?'sel':'')+'" onclick="pickAddCat(this,\''+c.id+'\')">'+catTile(c,40)+'<div class="n">'+c.name+'</div></div>'
-    ).join('');
-  }
+  // rebuild grids with correct selection
+  const cats = state.categories.filter(c=>c.type===tx.type);
+  document.getElementById('addCatGrid').innerHTML = cats.map(c=>
+    '<div class="catcell '+(c.id===addCatId?'sel':'')+'" onclick="pickAddCat(this,\''+c.id+'\')">'+catTile(c,40)+'<div class="n">'+c.name+'</div></div>'
+  ).join('');
   document.getElementById('addAccChips').innerHTML = state.accounts.map(a=>
     '<div class="chip '+(a.id===addAccId?'active':'')+'" onclick="pickAddAcc(this,\''+a.id+'\')">'+icon(a.icon,14)+a.name+'</div>'
-  ).join('');
-  const toChips = document.getElementById('addToAccChips');
-  if(toChips) toChips.innerHTML = state.accounts.map(a=>
-    '<div class="chip '+(a.id===addToAccId?'active':'')+'" onclick="pickAddToAcc(this,\''+a.id+'\')">'+icon(a.icon,14)+a.name+'</div>'
   ).join('');
   document.getElementById('addNote').value = tx.note || '';
   fillDateSelectors(tx.date);
@@ -766,42 +839,20 @@ function closeAdd(){ closeSheet('addOverlay'); editingTxId=null; }
 function closeSheet(id){ document.getElementById(id).classList.remove('show'); }
 function setAddType(type){
   addType=type;
-  const isTransfer = type === 'transfer';
   document.getElementById('typeExpense').classList.toggle('active', type==='expense');
   document.getElementById('typeIncome').classList.toggle('active', type==='income');
-  const typeTransfer = document.getElementById('typeTransfer');
-  if(typeTransfer) typeTransfer.classList.toggle('active', isTransfer);
-
-  const catField = document.getElementById('addCatField');
-  const toAccField = document.getElementById('addToAccField');
-  const fromLabel = document.getElementById('addFromLabel');
-  if(catField) catField.style.display = isTransfer ? 'none' : '';
-  if(toAccField) toAccField.style.display = isTransfer ? '' : 'none';
-  if(fromLabel) fromLabel.textContent = isTransfer ? 'From account' : 'Account';
-
-  if(!isTransfer){
-    const cats = state.categories.filter(c=>c.type===type);
-    addCatId = cats[0] ? cats[0].id : null;
-    document.getElementById('addCatGrid').innerHTML = cats.map(c=>
-      '<div class="catcell '+(c.id===addCatId?'sel':'')+'" onclick="pickAddCat(this,\''+c.id+'\')">'+catTile(c,40)+'<div class="n">'+c.name+'</div></div>'
-    ).join('');
-  } else {
-    addCatId = null;
-  }
+  const cats = state.categories.filter(c=>c.type===type);
+  addCatId = cats[0] ? cats[0].id : null;
+  document.getElementById('addCatGrid').innerHTML = cats.map(c=>
+    '<div class="catcell '+(c.id===addCatId?'sel':'')+'" onclick="pickAddCat(this,\''+c.id+'\')">'+catTile(c,40)+'<div class="n">'+c.name+'</div></div>'
+  ).join('');
   addAccId = state.accounts[0] ? state.accounts[0].id : null;
-  addToAccId = state.accounts[1] ? state.accounts[1].id : (state.accounts[0] ? state.accounts[0].id : null);
   document.getElementById('addAccChips').innerHTML = state.accounts.map(a=>
     '<div class="chip '+(a.id===addAccId?'active':'')+'" onclick="pickAddAcc(this,\''+a.id+'\')">'+icon(a.icon,14)+a.name+'</div>'
   ).join('');
-  const toChips = document.getElementById('addToAccChips');
-  if(toChips) toChips.innerHTML = state.accounts.map(a=>
-    '<div class="chip '+(a.id===addToAccId?'active':'')+'" onclick="pickAddToAcc(this,\''+a.id+'\')">'+icon(a.icon,14)+a.name+'</div>'
-  ).join('');
 }
-
 function pickAddCat(el,id){ addCatId=id; document.querySelectorAll('#addCatGrid .catcell').forEach(c=>c.classList.remove('sel')); el.classList.add('sel'); }
 function pickAddAcc(el,id){ addAccId=id; document.querySelectorAll('#addAccChips .chip').forEach(c=>c.classList.remove('active')); el.classList.add('active'); }
-function pickAddToAcc(el,id){ addToAccId=id; document.querySelectorAll('#addToAccChips .chip').forEach(c=>c.classList.remove('active')); el.classList.add('active'); }
 function setAmt(n){ addAmountStr=String(n); renderAmt(); }
 function renderAmt(){ document.getElementById('addAmountDisplay').textContent = addAmountStr || '0'; }
 function buildKeypad(){
@@ -832,13 +883,8 @@ function fillDateSelectors(e){
 function saveTransaction(){
   const amount = parseFloat(addAmountStr);
   if(!amount || amount<=0){ toast('Enter a valid amount'); return; }
-  if(addType === 'transfer'){
-    if(!addAccId || !addToAccId){ toast('Pick from and to accounts'); return; }
-    if(addAccId === addToAccId){ toast('Choose different accounts'); return; }
-  } else {
-    if(!addCatId){ toast('Pick a category'); return; }
-    if(!addAccId){ toast('Pick an account'); return; }
-  }
+  if(!addCatId){ toast('Pick a category'); return; }
+  if(!addAccId){ toast('Pick an account'); return; }
   const y = parseInt(document.getElementById('addDateYear').value);
   const m = parseInt(document.getElementById('addDateMonth').value);
   const d = parseInt(document.getElementById('addDateDay').value);
@@ -846,25 +892,13 @@ function saveTransaction(){
   if(editingTxId){
     const tx = state.transactions.find(x=>x.id===editingTxId);
     if(tx){
-      tx.type=addType;
-      tx.categoryId = addType==='transfer' ? null : addCatId;
-      tx.accountId=addAccId;
-      tx.toAccountId = addType==='transfer' ? addToAccId : null;
+      tx.type=addType; tx.categoryId=addCatId; tx.accountId=addAccId;
       tx.amount=amount; tx.note=note; tx.date={y,m,d};
     }
     saveState(); closeAdd(); toast('Transaction updated'); render();
   } else {
-    const obj = {id:'t'+Date.now(), type:addType, accountId:addAccId, amount, note, date:{y,m,d}};
-    if(addType === 'transfer'){
-      obj.toAccountId = addToAccId;
-      obj.categoryId = null;
-    } else {
-      obj.categoryId = addCatId;
-    }
-    state.transactions.push(obj);
-    saveState(); closeAdd();
-    const labels = {income:'Income', expense:'Expense', transfer:'Transfer'};
-    toast((labels[addType]||'Transaction')+' added'); render();
+    state.transactions.push({id:'t'+Date.now(), type:addType, categoryId:addCatId, accountId:addAccId, amount, note, date:{y,m,d}});
+    saveState(); closeAdd(); toast((addType==='income'?'Income':'Expense')+' added'); render();
   }
   editingTxId = null;
 }
@@ -880,80 +914,10 @@ function deleteTransaction(){
 const THEMES = [ {id:'green', name:'Green', c1:'#F2F8F4', c2:'#1F8A4C'}, {id:'gold', name:'Meskel Gold', c1:'#FAF8F1', c2:'#C9971A'}, {id:'coffee', name:'Coffee', c1:'#241712', c2:'#D4A24C'}, {id:'indigo', name:'Indigo', c1:'#171A33', c2:'#E0B93D'}, {id:'sky', name:'Sky Blue', c1:'#E8F4FC', c2:'#2B8ECF'}, {id:'noir', name:'Noir', c1:'#0B0D12', c2:'#5B8CFF'} ];
 function renderSettings(){
   document.getElementById('themeRow').innerHTML = THEMES.map(th=>
-    '<div class="theme-sw '+(state.theme===th.id?'sel':'')+'" onclick="setTheme(\''+th.id+'\')"><div class="swatch" style="background:linear-gradient(135deg,'+th.c1+' 50%,'+th.c2+' 50%)"></div><div class="lbl">'+th.name+'</div></div>'
+    '<button class="theme-sw '+(state.theme===th.id?'sel':'')+'" onclick="setTheme(\''+th.id+'\')" aria-label="Use '+th.name+' theme"><div class="swatch" style="background:linear-gradient(135deg,'+th.c1+' 50%,'+th.c2+' 50%)"></div><div class="lbl">'+th.name+'</div></button>'
   ).join('');
   document.getElementById('swGreg').classList.toggle('on', state.showGregorian);
-  renderDebts();
 }
-function renderDebts(){
-  const lentEl = document.getElementById('debtLentList');
-  const borEl = document.getElementById('debtBorrowedList');
-  if(!lentEl || !borEl) return;
-  const lent = state.debts.lent || [];
-  const bor = state.debts.borrowed || [];
-  lentEl.innerHTML = lent.length ? lent.map(d=>
-    '<div class="debt-row '+(d.settled?'settled':'')+'">'+
-      '<div class="debt-mid"><div class="debt-name">'+d.person+'</div>'+
-      '<div class="debt-sub">'+(d.note||'')+' · '+fmtEthShort(d.date)+(d.settled?' · settled':'')+'</div></div>'+
-      '<div class="debt-amt out">'+fmt(d.amount)+'</div>'+
-      '<div class="debt-acts"><button class="debt-btn" onclick="toggleDebtSettled(\'lent\',\''+d.id+'\')">'+(d.settled?'↺':'✓')+'</button>'+
-      '<button class="debt-btn danger" onclick="deleteDebt(\'lent\',\''+d.id+'\')">×</button></div>'+
-    '</div>'
-  ).join('') : '<div class="empty-sm">No money lent yet</div>';
-  borEl.innerHTML = bor.length ? bor.map(d=>
-    '<div class="debt-row '+(d.settled?'settled':'')+'">'+
-      '<div class="debt-mid"><div class="debt-name">'+d.person+'</div>'+
-      '<div class="debt-sub">'+(d.note||'')+' · '+fmtEthShort(d.date)+(d.settled?' · settled':'')+'</div></div>'+
-      '<div class="debt-amt in">'+fmt(d.amount)+'</div>'+
-      '<div class="debt-acts"><button class="debt-btn" onclick="toggleDebtSettled(\'borrowed\',\''+d.id+'\')">'+(d.settled?'↺':'✓')+'</button>'+
-      '<button class="debt-btn danger" onclick="deleteDebt(\'borrowed\',\''+d.id+'\')">×</button></div>'+
-    '</div>'
-  ).join('') : '<div class="empty-sm">No money borrowed yet</div>';
-  const lentOpen = lent.filter(d=>!d.settled).reduce((s,d)=>s+d.amount,0);
-  const borOpen = bor.filter(d=>!d.settled).reduce((s,d)=>s+d.amount,0);
-  const sumL = document.getElementById('debtLentSum');
-  const sumB = document.getElementById('debtBorrowedSum');
-  if(sumL) sumL.textContent = fmt(lentOpen);
-  if(sumB) sumB.textContent = fmt(borOpen);
-}
-function openAddDebt(kind){
-  document.getElementById('debtKind').value = kind;
-  document.getElementById('debtSheetTitle').textContent = kind==='lent' ? 'ያበደርኩት · Money I lent' : 'የተበደርኩት · Money I borrowed';
-  document.getElementById('debtPerson').value = '';
-  document.getElementById('debtAmount').value = '';
-  document.getElementById('debtNote').value = '';
-  const t = todayEth();
-  document.getElementById('debtDate').value = t.y+'-'+t.m+'-'+t.d;
-  document.getElementById('debtOverlay').classList.add('show');
-}
-function saveDebt(){
-  const kind = document.getElementById('debtKind').value;
-  const person = document.getElementById('debtPerson').value.trim();
-  const amount = parseFloat(document.getElementById('debtAmount').value);
-  if(!person){ toast('Enter person name'); return; }
-  if(!amount || amount<=0){ toast('Enter amount'); return; }
-  const note = document.getElementById('debtNote').value.trim();
-  const dateStr = document.getElementById('debtDate').value || '';
-  let y,m,d;
-  if(dateStr.includes('-')){
-    const p = dateStr.split('-').map(Number);
-    y=p[0]; m=p[1]; d=p[2];
-  } else {
-    const t = todayEth(); y=t.y; m=t.m; d=t.d;
-  }
-  state.debts[kind].push({id:'d'+Date.now(), person, amount, note, date:{y,m,d}, settled:false});
-  saveState(); closeSheet('debtOverlay'); renderDebts(); toast('Saved');
-}
-function toggleDebtSettled(kind, id){
-  const d = state.debts[kind].find(x=>x.id===id);
-  if(d){ d.settled = !d.settled; saveState(); renderDebts(); }
-}
-function deleteDebt(kind, id){
-  if(!confirm('Remove this record?')) return;
-  state.debts[kind] = state.debts[kind].filter(x=>x.id!==id);
-  saveState(); renderDebts(); toast('Removed');
-}
-
 function setTheme(id){ state.theme=id; document.body.setAttribute('data-theme', id); saveState(); renderIcons(); renderSettings(); }
 function toggleGregorian(){ state.showGregorian=!state.showGregorian; saveState(); renderSettings(); if(currentScreen==='home') renderHome(); }
 function clearSample(){
@@ -977,26 +941,69 @@ function resetApp(){
 }
 
 /* ===================== EXPORT CSV ===================== */
+function csvEscape(value){
+  const text=String(value??'');
+  return /[",\n\r]/.test(text) ? '"'+text.replace(/"/g,'""')+'"' : text;
+}
 async function exportCSV(){
-  const rows = [['Date (Ethiopian)','Type','Category','Account','Amount','Note']];
+  const rows = [['ID','Date (Ethiopian)','Type','Category','Account','Amount','Note']];
   [...state.transactions].sort((a,b)=>ethiopianToJDN(a.date.y,a.date.m,a.date.d)-ethiopianToJDN(b.date.y,b.date.m,b.date.d))
-    .forEach(t=>{ if(t.type==='transfer'){
-      rows.push([fmtEthDate(t.date), 'transfer', '—', accById(t.accountId).name+' → '+accById(t.toAccountId).name, t.amount, (t.note||'').replace(/,/g,';')]);
-    } else {
-      rows.push([fmtEthDate(t.date), t.type, catById(t.categoryId).name, accById(t.accountId).name, t.amount, (t.note||'').replace(/,/g,';')]);
-    } });
-  const csv = rows.map(r=>r.join(',')).join('\n');
-  try{
-    const downloads = await claude.use('downloads');
-    if(downloads){ await downloads.save({filename:'yenebirr-transactions.csv', data:csv}); toast('CSV ready to save'); return; }
-  }catch(e){}
+    .forEach(t=>{ rows.push([t.id,fmtEthDate(t.date), t.type, catById(t.categoryId).name, accById(t.accountId).name, t.amount, t.note||'']); });
+  const csv = rows.map(r=>r.map(csvEscape).join(',')).join('\r\n');
   try{
     const blob = new Blob([csv], {type:'text/csv'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href=url; a.download='yenebirr-transactions.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    toast('CSV downloaded');
+    toast('CSV exported');
   }catch(e){ toast('Export not available here'); }
+}
+function parseCSV(text){
+  const rows=[]; let row=[], cell='', quoted=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i], next=text[i+1];
+    if(ch==='"' && quoted && next==='"'){cell+='"';i++;continue;}
+    if(ch==='"'){quoted=!quoted;continue;}
+    if(ch===',' && !quoted){row.push(cell);cell='';continue;}
+    if((ch==='\n'||ch==='\r') && !quoted){if(ch==='\r'&&next==='\n')i++;row.push(cell);if(row.some(v=>v!==''))rows.push(row);row=[];cell='';continue;}
+    cell+=ch;
+  }
+  if(cell!==''||row.length){row.push(cell);rows.push(row);}
+  return rows;
+}
+function parseImportedEthDate(value){
+  const match=String(value||'').trim().match(/^(.+?)\s+(\d+),\s*(\d+)$/);
+  if(!match) return null;
+  const month=ETH_MONTHS.findIndex(m=>m.am===match[1]||m.en.toLowerCase()===match[1].toLowerCase())+1;
+  const d=Number(match[2]), y=Number(match[3]);
+  return month>0 && d>=1 && d<=ethMonthLen(y,month) ? {y,m:month,d} : null;
+}
+async function importCSV(event){
+  const file=event.target.files&&event.target.files[0];
+  event.target.value='';
+  if(!file) return;
+  try{
+    const rows=parseCSV(await file.text());
+    if(rows.length<2) throw new Error('empty');
+    const header=rows[0].map(x=>x.trim().toLowerCase());
+    const idx=name=>header.indexOf(name);
+    const dateIndex=idx('date (ethiopian)'), typeIndex=idx('type'), catIndex=idx('category'), accIndex=idx('account'), amountIndex=idx('amount'), noteIndex=idx('note');
+    if(dateIndex<0||typeIndex<0||catIndex<0||accIndex<0||amountIndex<0) throw new Error('format');
+    let imported=0, skipped=0;
+    rows.slice(1).forEach((r,n)=>{
+      const date=parseImportedEthDate(r[dateIndex]);
+      const type=(r[typeIndex]||'').toLowerCase();
+      const amount=Number(String(r[amountIndex]||'').replace(/,/g,''));
+      if(!date||!['income','expense'].includes(type)||!Number.isFinite(amount)||amount<=0){skipped++;return;}
+      let category=state.categories.find(c=>c.type===type&&c.name.toLowerCase()===String(r[catIndex]||'').trim().toLowerCase());
+      if(!category){category={id:'c'+Date.now()+n,type,name:String(r[catIndex]||'Other').trim()||'Other',icon:type==='income'?'coin':'other',color:type==='income'?'#1F6E43':'#6E637A'};state.categories.push(category);}
+      let account=state.accounts.find(a=>a.name.toLowerCase()===String(r[accIndex]||'').trim().toLowerCase());
+      if(!account){account={id:'a'+Date.now()+n,name:String(r[accIndex]||'Imported account').trim()||'Imported account',icon:'wallet',color:COLOR_PALETTE[state.accounts.length%COLOR_PALETTE.length],start:0,dashboard:true};state.accounts.push(account);}
+      state.transactions.push({id:r[idx('id')]||'t'+Date.now()+n,type,categoryId:category.id,accountId:account.id,amount,note:r[noteIndex]||'',date});
+      imported++;
+    });
+    saveState(); render(); toast('Imported '+imported+' transaction'+(imported===1?'':'s')+(skipped?' · skipped '+skipped:'') );
+  }catch(e){ toast('CSV import failed: use a Yene Birr export file'); }
 }
 
 /* ===================== APP ICON (SVG) ===================== */
@@ -1017,6 +1024,7 @@ function render(){
   else if(currentScreen==='calendar') renderCalendar();
   else if(currentScreen==='ledger') renderLedger();
   else if(currentScreen==='analysis') renderAnalysis();
+  else if(currentScreen==='lendborrow') renderLendBorrow();
   else if(currentScreen==='more') renderSettings();
   else if(currentScreen==='budget') renderBudget();
   else if(currentScreen==='categories') renderCategories();
@@ -1037,14 +1045,14 @@ setTimeout(function(){
 
 /* ===================== EXPOSE TO WINDOW (for inline onclick handlers) ===================== */
 Object.assign(window, {
-  go, openAdd, closeAdd, closeSheet, exportCSV,
+  go, openAdd, closeAdd, closeSheet, exportCSV, importCSV,
   calToday, calShift, calPick,
-  openAddAccount, openEditAccount, pickAccIcon, saveAccount, deleteAccount, toggleAccSaving,
+  openAddAccount, openEditAccount, pickAccIcon, saveAccount, deleteAccount, toggleAccountDashboard, toggleDashboardAccount,
   setLedgerFilter,
   openAddCategory, pickCatIcon, pickCatColor, setCatType, saveCategory, deleteCategory, setCatTab,
   promptBudget,
-  setAddType, pickAddCat, pickAddAcc, pickAddToAcc, setAmt, kpPress, kpBack, saveTransaction,
+  setAddType, pickAddCat, pickAddAcc, setAmt, kpPress, kpBack, saveTransaction,
   openEditTx, deleteTransaction,
-  setTheme, toggleGregorian, clearSample, resetApp, analysisShift,
-  openAddDebt, saveDebt, toggleDebtSettled, deleteDebt
+  setTheme, toggleGregorian, clearSample, resetApp, analysisShift, toggleCategoryDetails, openLendBorrow,
+  openAddLoan, openEditLoan, setLoanType, pickLoanAccount, saveLoan, settleLoan, deleteLoan, setLoanFilter
 });
