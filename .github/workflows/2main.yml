@@ -1,8 +1,8 @@
-# Yene Birr — Build Android debug APK
+# yenebirr — Build Android debug APK
 # Triggers on push to main/master, tags, or manual run.
 # Artifact name: yenebirr-debug-apk
 
-name: Build Android APK
+name: yenebirr
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build yenebirr debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -28,11 +28,10 @@ jobs:
           cache: 'npm'
 
       - name: Setup Java (Temurin 17)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -49,7 +48,7 @@ jobs:
             npx cap add android
           fi
 
-      - name: Sync Capacitor (copy web → android)
+      - name: Sync Capacitor (copy web to Android)
         run: npx cap sync android
 
       - name: Copy launcher icons into Android res
@@ -57,21 +56,37 @@ jobs:
           if [ -f scripts/setup-native-plugin.cjs ]; then
             node scripts/setup-native-plugin.cjs || true
           fi
-          # Fallback icon copy if script partial
+
           RES=android/app/src/main/res
+
           if [ -d "$RES" ] && [ -d public/icons ]; then
             mkdir -p "$RES"/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}
-            [ -f public/icons/icon-48.png ]  && cp public/icons/icon-48.png  "$RES/mipmap-mdpi/ic_launcher.png"       && cp public/icons/icon-48.png  "$RES/mipmap-mdpi/ic_launcher_round.png"
-            [ -f public/icons/icon-72.png ]  && cp public/icons/icon-72.png  "$RES/mipmap-hdpi/ic_launcher.png"       && cp public/icons/icon-72.png  "$RES/mipmap-hdpi/ic_launcher_round.png"
-            [ -f public/icons/icon-96.png ]  && cp public/icons/icon-96.png  "$RES/mipmap-xhdpi/ic_launcher.png"      && cp public/icons/icon-96.png  "$RES/mipmap-xhdpi/ic_launcher_round.png"
-            [ -f public/icons/icon-144.png ] && cp public/icons/icon-144.png "$RES/mipmap-xxhdpi/ic_launcher.png"     && cp public/icons/icon-144.png "$RES/mipmap-xxhdpi/ic_launcher_round.png"
-            [ -f public/icons/icon-192.png ] && cp public/icons/icon-192.png "$RES/mipmap-xxxhdpi/ic_launcher.png"    && cp public/icons/icon-192.png "$RES/mipmap-xxxhdpi/ic_launcher_round.png"
+
+            [ -f public/icons/icon-48.png ] && \
+              cp public/icons/icon-48.png "$RES/mipmap-mdpi/ic_launcher.png" && \
+              cp public/icons/icon-48.png "$RES/mipmap-mdpi/ic_launcher_round.png"
+
+            [ -f public/icons/icon-72.png ] && \
+              cp public/icons/icon-72.png "$RES/mipmap-hdpi/ic_launcher.png" && \
+              cp public/icons/icon-72.png "$RES/mipmap-hdpi/ic_launcher_round.png"
+
+            [ -f public/icons/icon-96.png ] && \
+              cp public/icons/icon-96.png "$RES/mipmap-xhdpi/ic_launcher.png" && \
+              cp public/icons/icon-96.png "$RES/mipmap-xhdpi/ic_launcher_round.png"
+
+            [ -f public/icons/icon-144.png ] && \
+              cp public/icons/icon-144.png "$RES/mipmap-xxhdpi/ic_launcher.png" && \
+              cp public/icons/icon-144.png "$RES/mipmap-xxhdpi/ic_launcher_round.png"
+
+            [ -f public/icons/icon-192.png ] && \
+              cp public/icons/icon-192.png "$RES/mipmap-xxxhdpi/ic_launcher.png" && \
+              cp public/icons/icon-192.png "$RES/mipmap-xxxhdpi/ic_launcher_round.png"
           fi
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build debug APK
+      - name: Build yenebirr debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
@@ -91,7 +106,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload APK on tag (release asset helper)
+      - name: Upload APK on tag
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
