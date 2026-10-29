@@ -1,6 +1,6 @@
 # Yene Birr — Build Android debug APK
 # Forces appId = app.yenebirr and app name = yenebirr
-# so it installs as a new app (no update of old versions)
+# so it installs as a completely new app
 name: Build Android APK
 
 on:
@@ -26,12 +26,14 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      # ← Fixed: use v5 + DO NOT enable gradle cache yet
+      # (android/ folder does not exist at this point)
       - name: Setup Java (Temurin 17)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+          # cache: 'gradle'   ← intentionally removed
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -44,14 +46,12 @@ jobs:
 
       - name: Force Capacitor appId + appName
         run: |
-          # Update capacitor.config.ts or capacitor.config.json
           if [ -f capacitor.config.ts ]; then
             sed -i 's/appId:.*$/appId: "app.yenebirr",/' capacitor.config.ts
             sed -i 's/appName:.*$/appName: "yenebirr",/' capacitor.config.ts
           fi
 
           if [ -f capacitor.config.json ]; then
-            # Using node for safer JSON update
             node -e '
               const fs = require("fs");
               const config = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
@@ -75,30 +75,25 @@ jobs:
 
       - name: Force Android applicationId + app name
         run: |
-          # 1. Force applicationId in build.gradle
+          # Force applicationId + namespace
           if [ -f android/app/build.gradle ]; then
-            # Replace existing applicationId
             sed -i 's/applicationId .*/applicationId "app.yenebirr"/' android/app/build.gradle
-            # Also force namespace if present (newer Android Gradle Plugin)
             sed -i 's/namespace .*/namespace "app.yenebirr"/' android/app/build.gradle
           fi
 
-          # 2. Force app name in strings.xml
+          # Force displayed name
           STRINGS="android/app/src/main/res/values/strings.xml"
           if [ -f "$STRINGS" ]; then
-            # Replace existing app_name or add it
             if grep -q 'name="app_name"' "$STRINGS"; then
               sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">yenebirr<\/string>/' "$STRINGS"
             else
-              # Insert before the closing </resources>
               sed -i 's|</resources>|    <string name="app_name">yenebirr</string>\n</resources>|' "$STRINGS"
             fi
           fi
 
-          echo "=== build.gradle (applicationId / namespace) ==="
+          echo "=== applicationId / namespace ==="
           grep -E 'applicationId|namespace' android/app/build.gradle || true
-
-          echo "=== strings.xml (app_name) ==="
+          echo "=== app_name ==="
           grep 'app_name' "$STRINGS" || true
 
       - name: Copy launcher icons into Android res
@@ -106,7 +101,6 @@ jobs:
           if [ -f scripts/setup-native-plugin.cjs ]; then
             node scripts/setup-native-plugin.cjs || true
           fi
-          # Fallback icon copy if script partial
           RES=android/app/src/main/res
           if [ -d "$RES" ] && [ -d public/icons ]; then
             mkdir -p "$RES"/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}
@@ -140,7 +134,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload APK on tag (release asset helper)
+      - name: Upload APK on tag
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
